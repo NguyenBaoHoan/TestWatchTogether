@@ -1,0 +1,66 @@
+# Build Artifacts
+target/
+build/
+out/
+
+# Dependency Directories
+node_modules/
+bower_components/
+
+# IDE-specific files
+.idea/
+.vscode/
+.eclipse/
+.classpath
+.project
+.settings/
+
+# Maven-specific files
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+
+# Gradle-specific files
+.gradle/
+
+# Log Files
+*.log
+logs/
+
+# Environment-specific files
+.env
+application*.properties.example
+application*.yml.example
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+.#*
+
+# Compiled classes
+*.class
+
+# Jar/War files
+*.jar
+*.war
+
+# Test reports
+test-reports/
+coverage/
+
+# Target directory for generated files
+bin/
+
+# Other potentially sensitive or generated files
+*.iml

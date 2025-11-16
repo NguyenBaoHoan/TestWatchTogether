@@ -1,0 +1,122 @@
+🔄 LUỒNG DỮ LIỆU CHI TIẾT
+Flow 1: User gửi video event (PLAY/PAUSE/SEEK)
+1. User gửi video event tới STOMP endpoint: /app/rooms/{roomId}/video
+2. VideoSyncController nhận event và gọi VideoSyncService để xử lý
+3. VideoSyncService cập nhật trạng thái video trong Redis và broadcast tới tất cả participants
+4. Các participants nhận được video event và cập nhật trạng thái video tương ứng
+┌─────────────┐
+│  Client A   │ (Host phát video)
+│ (Frontend)  │
+└──────┬──────┘
+       │ 1. client.publish({
+       │    destination: "/app/rooms/{roomId}/video",
+       │    body: { type: "PLAY", currentTime: 10.5 }
+       │ })
+       ↓
+┌──────────────────────────────────────────────────┐
+│  STOMP Broker (Spring WebSocket)                │
+│  - Nhận message tại /app/rooms/{roomId}/video   │
+└──────────────────────────┬───────────────────────┘
+                           │
+                           ↓
+┌───────────────────────────────────────────────────┐
+│  VideoSyncController.handleVideoEvent()          │
+│  2. Extract participantId từ session             │
+│  3. Validate room exists                         │
+│  4. Set metadata (participantId, timestamp)      │
+└──────────────────────┬────────────────────────────┘
+                       │
+                       ↓
+┌───────────────────────────────────────────────────┐
+│  VideoSyncService.broadcastVideoEvent()          │
+│  5. updateRoomVideoState() → Lưu Redis           │
+│     - room.playbackState = "PLAYING"             │
+│     - room.lastPosition = 10.5                   │
+│     - room.lastSyncAt = now()                    │
+│  6. messagingTemplate.convertAndSend(            │
+│       "/topic/rooms/{roomId}/video", event)      │
+└──────────────────────┬────────────────────────────┘
+                       │
+                       ↓
+┌───────────────────────────────────────────────────┐
+│  STOMP Broker                                    │
+│  - Broadcast tới tất cả subscribers của          │
+│    /topic/rooms/{roomId}/video                   │
+└──────────────┬────────────────────────────────────┘
+               │
+    ┌──────────┼──────────┐
+    ↓          ↓          ↓
+┌─────────┐ ┌─────────┐ ┌─────────┐
+│Client A │ │Client B │ │Client C │
+│(Host)   │ │(Guest)  │ │(Guest)  │
+└─────────┘ └─────────┘ └─────────┘
+  7. Nhận event và sync player state
+     - setIsPlaying(true)
+     - setCurrentTime(10.5)
+
+     Flow 2: User mới join room (nhận initial state)
+     1. User mới join room sẽ gửi request tới STOMP endpoint: /app/rooms/{roomId}/video/sync
+     2. VideoSyncController nhận request và gọi VideoSyncService để lấy trạng thái video hiện tại
+     3. VideoSyncService lấy thông tin room từ Redis và gửi lại trạng thái video cho user
+     4. User nhận được trạng thái video và cập nhật player state tương ứng
+
+┌─────────────┐
+│  Client D   │ (User mới)
+│ (Frontend)  │
+└──────┬──────┘
+       │ 1. Gọi API POST /api/rooms/{roomId}/join
+       │    → Nhận accessToken (cookie)
+       ↓
+┌──────────────────────────────────────────────────┐
+│  RoomController.joinRoom()                       │
+│  2. Tạo/lấy participant                          │
+│  3. Set cookie WT_ACCESS_TOKEN                   │
+└──────────────────────┬───────────────────────────┘
+                       │
+       ┌───────────────┘
+       │ 4. Client kết nối WebSocket
+       │    new SockJS('/ws')
+       ↓
+┌──────────────────────────────────────────────────┐
+│  WebSocketHandshakeInterceptor                   │
+│  5. Extract JWT từ cookie                        │
+│  6. Validate token                               │
+│  7. Set session attributes (participantId, roomId)│
+└──────────────────────┬───────────────────────────┘
+                       │
+                       ↓
+┌──────────────────────────────────────────────────┐
+│  Client subscribes:                              │
+│  - /topic/rooms/{roomId}/video (room events)     │
+│  - /queue/video/sync (initial state)             │
+└──────────────────────┬───────────────────────────┘
+                       │
+       ┌───────────────┘
+       │ 8. Client gửi REQUEST_SYNC
+       ↓
+┌──────────────────────────────────────────────────┐
+│  VideoSyncService.sendCurrentStateToUser()       │
+│  9. Lấy room state từ Redis                      │
+│ 10. Tạo SYNC_STATE event với:                    │
+│     - currentVideoUrl                            │
+│     - lastPosition                               │
+│     - playbackState                              │
+│ 11. Send riêng tới user:                         │
+│     messagingTemplate.convertAndSendToUser(      │
+│       sessionId, "/queue/video/sync", event)     │
+└──────────────────────┬───────────────────────────┘
+                       │
+                       ↓
+┌───────────────────────────────────────────────────┐
+│  Client D nhận SYNC_STATE                        │
+│ 12. setVideoUrl(currentVideoUrl)                 │
+│ 13. setCurrentTime(lastPosition)                 │
+│ 14. setIsPlaying(playbackState === "PLAYING")    │
+└───────────────────────────────────────────────────┘
+
+🎯 ĐIỂM QUAN TRỌNG
+WebSocket authentication: JWT được validate trong WebSocketHandshakeInterceptor trước khi cho phép kết nối
+State persistence: Video state được lưu trong Redis để user mới join có thể sync
+Broadcast pattern: Dùng /topic cho room-wide messages, /queue cho user-specific
+TTL: Room tự động bị xóa sau 24h (Redis TTL)
+Security: Mỗi participant phải có valid JWT token, kiểm tra roomId match
