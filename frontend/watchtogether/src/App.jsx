@@ -106,7 +106,7 @@ function App() {
       // Cập nhật video đang phát trong phòng luôn (nhưng chưa chạy)
       setVideoState(prev => ({
         ...prev,
-        videoId: msg.currentVideoId,
+        videoId: msg.currentVideoId || prev.videoId || 'M7lc1UVf-VE',
         timestamp: msg.currentTime,
         isPlaying: false // Mới vào bắt buộc dừng
       }));
@@ -154,10 +154,23 @@ function App() {
     // Thử tách ID từ link
     const extractedId = getYouTubeID(inputVideoId);
     if (extractedId) {
-      // Nếu link đúng -> Gửi lệnh
-      sendVideoAction('CHANGE_VIDEO', extractedId, 0);
+      if (isSynced || isHost) {
+        // TRƯỜNG HỢP 1: Đã Sync hoặc là Host -> Gửi lệnh cho cả phòng
+        sendVideoAction('CHANGE_VIDEO', extractedId, 0);
+        toast.success("Đã đổi video phòng thành công!");
+      } else {
+        // TRƯỜNG HỢP 2: Chưa Sync và là Guest -> Chỉ đổi local
+        setVideoState(prev => ({
+          ...prev,
+          videoId: extractedId,
+          isPlaying: false,
+          timestamp: 0
+        }));
+        toast.success("Đã đổi video local thành công!");
+
+      }
+      // Reset ô input
       setInputVideoId('');
-      toast.success("Đã đổi video thành công!");
     } else {
       // Nếu link sai -> Báo lỗi, KHÔNG GỬI, KHÔNG CRASH
       toast.error("Link YouTube không hợp lệ! Vui lòng kiểm tra lại.");
