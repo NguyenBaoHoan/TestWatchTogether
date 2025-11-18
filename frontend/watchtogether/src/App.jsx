@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useWebSocket } from './hooks/useWebsocket';
 import VideoPlayer from './components/VideoPlayer';
 import ChatBox from './components/ChatBox';
@@ -19,15 +19,39 @@ function App() {
   });
   const [inputVideoId, setInputVideoId] = useState('');
   const playerInstanceRef = useRef(null);
+
   // 1. State mới: Xác định đã bấm Sync chưa và có phải Host không
   const [isSynced, setIsSynced] = useState(false); // Mặc định là CHƯA Sync
   const [isHost, setIsHost] = useState(false);
+  const [hostName, setHostName] = useState('');
+  // Đánh dấu đang "chờ" phản hồi sync
+  const [isWaitingForSync, setIsWaitingForSync] = useState(false);
+  // 2. TẠO MỘT REF ĐỂ LƯU STATE MỚI NHẤT
+  // Ref này sẽ giúp các callback (như handleVideoAction) luôn đọc được giá trị mới
+  const stateRef = useRef({
+    isHost: false,
+    isSynced: false,
+    videoId: videoState.videoId,
+    isWaitingForSync: false // Thêm vào ref
+  });
+
+  // 3. CẬP NHẬT REF MỖI KHI STATE THAY ĐỔI
+  useEffect(() => {
+    stateRef.current = {
+      isHost: isHost,
+      isSynced: isSynced,
+      videoId: videoState.videoId,
+      isWaitingForSync: isWaitingForSync // Thêm vào ref
+    };
+  }, [isHost, isSynced, videoState.videoId, isWaitingForSync]); // Phụ thuộc vào các state này
+
   // WebSocket Callbacks
   const handleVideoAction = (data) => {
     if (data.type === 'ASK_SYNC') {
       // neu la host thi gui lai trang thai hien tai
-      if (isHost) {
-        console.log('I am host, sending current state for sync');
+      // Dùng ref để check (luôn là giá trị mới nhất)
+      if (stateRef.current.isHost) {
+        console.log('Host đang trả lời ASK_SYNC...');
         const currentTime = playerInstanceRef.current ? playerInstanceRef.current.getCurrentTime() : 0;
         // Gửi lệnh SYNC chứa thời gian thực của Host
         // Lưu ý: Gửi kèm trạng thái playing hiện tại của Host
@@ -36,6 +60,23 @@ function App() {
       }
       return; // Không cần update state gì cả
     }
+    // CỔNG KIỂM SOÁT LOGIC MỚI
+    if (!stateRef.current.isHost && !stateRef.current.isSynced) {
+      // Tôi là Guest VÀ chưa Sync.
+
+      // Kiểm tra xem tôi có đang "chờ" không (đã bấm nút Sync chưa)
+      if (stateRef.current.isWaitingForSync && (data.type === 'PLAY' || data.type === 'PAUSE')) {
+        // ĐÚNG! Đây là tin nhắn trả lời tôi đang chờ.
+        console.log("First sync received! Unlocking sync.");
+        setIsSynced(true); // Mở cổng
+        setIsWaitingForSync(false); // Ngừng chờ
+      } else {
+        // KHÔNG! Đây là lệnh Host tua/play/pause (nhiễu). Bỏ qua.
+        console.log("Action bị bỏ qua (chưa sync và không phải là reply):", data.type);
+        return;
+      }
+    }
+
     console.log('Received Action:', data);
     setVideoState(prev => ({
       ...prev,
@@ -51,6 +92,8 @@ function App() {
   const handleChatMessage = (msg) => {
     // Nếu là tin nhắn thông tin phòng (khi mới join)
     if (msg.hostName) {
+      // 2. CẬP NHẬT TÊN HOST VÀO STATE
+      setHostName(msg.hostName);
       // Kiểm tra xem mình có phải host không
       if (msg.hostName === username) {
         setIsHost(true);
@@ -85,6 +128,7 @@ function App() {
     e.preventDefault();
     if (username && roomId) setStep(2);
   };
+
   const onPlayerStateChange = (type, currentTime) => {
     // Chỉ cho phép gửi lệnh nếu đã Sync hoặc là Host
     if (isSynced || isHost) {
@@ -125,18 +169,19 @@ function App() {
       toast.error("Chưa kết nối tới server, không thể Sync!");
       return;
     }
-    // Đánh dấu là đã Sync để bắt đầu nhận/gửi dữ liệu
-    setIsSynced(true);
+
     if (isHost) {
       // Nếu là Host: Gửi thời gian của mình cho mọi người (PUSH)
       const currentTime = playerInstanceRef.current ? playerInstanceRef.current.getCurrentTime() : 0;
+      const currentStatus = playerInstanceRef.current ? (playerInstanceRef.current.getPlayerState() === 1 ? 'PLAY' : 'PAUSE') : 'PAUSE';
       // Gửi lệnh PLAY để ép mọi người chạy theo mình
-      sendVideoAction('PLAY', videoState.videoId, currentTime);
+      sendVideoAction(currentStatus, videoState.videoId, currentTime);
 
       console.log("Syncing at time:", currentTime); // Debug xem đúng chưa
-      toast.success("Đã đồng bộ cho tất cả mọi người!");
+      toast.success("Đã đồng bộ lại cho tất cả mọi người!");
     } else {
-      // Nếu là Khách: Gửi yêu cầu lấy dữ liệu (PULL)
+      // Guest bấm Sync: Đặt cờ "đang chờ" và gửi ASK_SYNC
+      setIsWaitingForSync(true);
       sendVideoAction('ASK_SYNC', videoState.videoId, 0);
       toast.info("Đang lấy dữ liệu từ chủ phòng...");
     }
@@ -195,6 +240,23 @@ function App() {
       <div className="container mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Video Player */}
         <div className="lg:col-span-2 space-y-4">
+          {/* 3. THÊM PHẦN HIỂN THỊ HOST TẠI ĐÂY */}
+          <div className="bg-white p-3 rounded-lg shadow flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              <span className="text-lg font-semibold text-gray-700">
+                Current Host: <span className="text-blue-600 font-bold">{hostName}</span>
+              </span>
+            </div>
+            {/* Nếu mình là Host thì hiện thêm cái nhãn cho oai */}
+            {isHost && (
+              <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded border border-green-400">
+                You are the Host
+              </span>
+            )}
+          </div>
           {/* 4. TRUYỀN PROP QUAN TRỌNG: 
                         Nếu chưa Sync (isSynced=false), ép video dừng lại bằng cách truyền isPlaying={false}
                     */}

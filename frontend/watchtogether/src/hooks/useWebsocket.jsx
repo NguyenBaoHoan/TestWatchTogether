@@ -1,13 +1,19 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 
 const SOCKET_URL = 'http://localhost:8080/ws';
 
 export const useWebSocket = (roomId, username, onVideoAction, onChatMessage) => {
-    const [stompClient, setStompClient] = useState(null);
+    const stompClientRef = useRef(null);
     const [isConnected, setIsConnected] = useState(false);
-
+    // Dùng ref để lưu callback, tránh re-connect lặp vô tận
+    const onVideoActionRef = useRef(onVideoAction);
+    const onChatMessageRef = useRef(onChatMessage);
+    useEffect(() => {
+        onVideoActionRef.current = onVideoAction;
+        onChatMessageRef.current = onChatMessage;
+    }, [onVideoAction, onChatMessage]);
     useEffect(() => {
         if (!roomId || !username) return;
 
@@ -27,15 +33,25 @@ export const useWebSocket = (roomId, username, onVideoAction, onChatMessage) => 
 
                 // 2. Lắng nghe lệnh điều khiển Video (Play/Pause/Sync)
                 client.subscribe(`/topic/room/${roomId}/video`, (message) => {
-                    if (onVideoAction) {
-                        onVideoAction(JSON.parse(message.body));
+                    if (onVideoActionRef.current) {
+                        onVideoActionRef.current(JSON.parse(message.body));
                     }
                 });
 
                 // 3. Lắng nghe Chat
                 client.subscribe(`/topic/room/${roomId}/chat`, (message) => {
-                    if (onChatMessage) {
-                        onChatMessage(JSON.parse(message.body));
+                    if (onChatMessageRef.current) {
+                        onChatMessageRef.current(JSON.parse(message.body));
+                    }
+                });
+                // 4. Lắng nghe thông tin phòng (để lấy Host Name)
+                client.subscribe(`/topic/room/${roomId}`, (message) => {
+                    const roomInfo = JSON.parse(message.body);
+                    console.log("Room Info:", roomInfo); // Debug xem có hostName không
+
+                    // Gọi hàm callback này để App.jsx cập nhật state
+                    if (onChatMessageRef.current) {
+                        onChatMessageRef.current(roomInfo);
                     }
                 });
             },
@@ -45,16 +61,19 @@ export const useWebSocket = (roomId, username, onVideoAction, onChatMessage) => 
         });
 
         client.activate();
-        setStompClient(client);
+        // 3. GÁN CLIENT VÀO REF
+        stompClientRef.current = client;
 
         return () => {
             client.deactivate();
+            stompClientRef.current = null;
         };
     }, [roomId, username]);
     // Hàm gửi lệnh Video (Play/Pause/Change)
-    const sendVideoAction = (actionType, videoId, timestamp) => {
+    const sendVideoAction = useCallback((actionType, videoId, timestamp) => {
+        const client = stompClientRef.current;
         // SỬA LẠI ĐOẠN NÀY: Kiểm tra kỹ stompClient và trạng thái connected
-        if (stompClient && stompClient.connected) {
+        if (client && client.connected) {
             const payload = {
                 roomId,
                 username,
@@ -64,7 +83,7 @@ export const useWebSocket = (roomId, username, onVideoAction, onChatMessage) => 
                 playerType: 0
             };
             try {
-                stompClient.publish({
+                client.publish({
                     destination: '/app/video/action',
                     body: JSON.stringify(payload)
                 });
@@ -72,22 +91,23 @@ export const useWebSocket = (roomId, username, onVideoAction, onChatMessage) => 
                 console.error("Lỗi khi gửi lệnh video:", error);
             }
         } else {
-            console.warn("Chưa kết nối WebSocket, không thể gửi lệnh!");
+            console.warn("Chưa kết nối WebSocket, không thể gửi lệnh!", client);
             // Có thể thêm logic hiển thị thông báo lỗi cho người dùng ở đây
         }
-    };
+    }, [roomId, username]);
 
     //Hàm gửi tin nhắn Chat
     const sendChatMessage = (content) => {
+        const client = stompClientRef.current; // Đọc từ ref
         // SỬA LẠI ĐOẠN NÀY TƯƠNG TỰ
-        if (stompClient && stompClient.connected) {
+        if (client && client.connected) {
             const payload = {
                 type: "CHAT",
                 content: content,
                 sender: username
             };
             try {
-                stompClient.publish({
+                client.publish({
                     destination: '/app/chat.sendMessage',
                     body: JSON.stringify(payload)
                 });
