@@ -43,25 +43,25 @@ const VideoPlayer = ({ videoId, isPlaying, timestamp, onStateChange, onPlayerIns
             onPlayerInstance(event.target);
         }
         // Thực hiện đồng bộ (Seek + Play/Pause) ngay khi sẵn sàng
-        try {
+            try {
             isRemoteUpdate.current = true; // Bật cờ chặn loop
 
             // Seek đến đúng thời gian
             playerRef.current.seekTo(timestamp, true);
 
             // Đặt đúng trạng thái Play/Pause
-            if (isPlaying) {
+                if (isPlaying) {
                 playerRef.current.playVideo();
-            } else {
+                } else {
                 playerRef.current.pauseVideo();
-            }
+                }
 
             // Tắt cờ sau 1 giây
             setTimeout(() => {
                 isRemoteUpdate.current = false;
             }, 1000);
 
-        } catch (e) {
+            } catch (e) {
             console.error("Lỗi khi đồng bộ lần đầu (onReady):", e);
         }
     };
@@ -77,11 +77,11 @@ const VideoPlayer = ({ videoId, isPlaying, timestamp, onStateChange, onPlayerIns
         isRemoteUpdate.current = true;
         const playerState = playerRef.current.getPlayerState();
 
-        if (isPlaying && playerState !== 1) {
+            if (isPlaying && playerState !== 1) {
             playerRef.current.playVideo();
-        } else if (!isPlaying && playerState === 1) {
+            } else if (!isPlaying && playerState === 1) {
             playerRef.current.pauseVideo();
-        }
+            }
 
         const currentTime = playerRef.current.getCurrentTime();
         if (Math.abs(currentTime - timestamp) > 1.5) { // Tăng lên 1.5s
